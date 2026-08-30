@@ -35,7 +35,7 @@ PAGES = {"mosaic_board.html": "index.html", "validation.html": "validation.html"
          "calibration.html": "calibration.html", "evidence.html": "evidence.html",
          "cebpa_evidence.html": "cebpa_evidence.html"}
 # JSON assets the pages fetch by name from the gui/ directory
-GUI_JSON = ["evidence.json", "evidence_samples.json", "mutation_frequency.json", "reliability.json",
+GUI_JSON = ["evidence.json", "evidence_samples.json", "evidence_modalities.json", "mutation_frequency.json", "reliability.json",
             "validation_stats.json", "cellstate_localization.json", "vaf_by_mutation.json",
             "cebpa_violin_data.json", "bulk_bakeoff_results.json"]
 # deliverables served under /val/ that are fetched as JSON (as opposed to linked for download)

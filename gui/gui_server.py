@@ -353,7 +353,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(500, b"mosaic_board.html not found next to gui_server.py",
                                   "text/plain; charset=utf-8")
             return self._send(200, HTML_PATH.read_bytes(), "text/html; charset=utf-8")
-        if path in ("/evidence.html", "/evidence.json", "/evidence_samples.json",
+        if path in ("/evidence.html", "/evidence.json", "/evidence_samples.json", "/evidence_modalities.json",
                     "/mutation_frequency.json", "/reliability.json", "/validation.html", "/validation_stats.json",
                     "/calibration.html", "/cellstate_localization.json", "/vaf_by_mutation.json",
                     "/therapy.html", "/rx_validation.html", "/survival_validation.html",

@@ -75,13 +75,16 @@ const NEUTRAL='#b9b6a8',DIM='#dcd9cd',HL='#2f6690';   // HL = "this patient", di
 const LIGHT={paper_bgcolor:'#ffffff',plot_bgcolor:'#ffffff',
   font:{color:INK,size:12,family:"system-ui,'Segoe UI',sans-serif"},
   margin:{l:52,r:14,t:10,b:66},legend:{orientation:'h',y:1.14,x:0}};
-let DB={},CUR=null,LOC={},SAMP={},SAMPSET=new Set(),CURKEY='',CURD='';
+let DB={},CUR=null,LOC={},SAMP={},SAMPSET=new Set(),CURKEY='',CURD='',MV=null;
 const IMPUTED={ADT:1,GRN:1,Lipid:1,Metabolite:1};   // imputed from RNA — RNA-conditioned, not independent
 Promise.all([
   fetch('evidence.json').then(r=>r.json()),
   fetch('cellstate_localization.json').then(r=>r.ok?r.json():{drivers:{}}).catch(()=>({drivers:{}})),
-  fetch('evidence_samples.json').then(r=>r.ok?r.json():{samples:[],drivers:{}}).catch(()=>({samples:[],drivers:{}}))
-]).then(([ev,loc,samp])=>{DB=ev.drivers;LOC=loc.drivers||{};SAMP=samp||{};SAMPSET=new Set(SAMP.samples||[]);init();});
+  fetch('evidence_samples.json').then(r=>r.ok?r.json():{samples:[],drivers:{}}).catch(()=>({samples:[],drivers:{}})),
+  // per-modality violins built from each modality's OWN matrix (build_modality_violins.py). Absent
+  // file -> the page degrades to the RNA-only behaviour it had before, with the explainer.
+  fetch('evidence_modalities.json').then(r=>r.ok?r.json():null).catch(()=>null)
+]).then(([ev,loc,samp,mv])=>{DB=ev.drivers;LOC=loc.drivers||{};SAMP=samp||{};SAMPSET=new Set(SAMP.samples||[]);MV=mv;init();});
 function init(){
   const sel=document.getElementById('driver');
   Object.keys(DB).forEach(d=>{const o=document.createElement('option');o.value=d;o.textContent=d;sel.appendChild(o);});
@@ -147,18 +150,31 @@ const MOD_WHY={
   Metabolite:'Metabolite features here are largely <b>unannotated</b> — names such as "Unknown0 932" are peak identifiers, not compounds, and certainly not genes. The block is imputed from RNA.',
   GRN:'GRN features are <b>transcription-factor regulons</b>. The regulon is named after its TF, so a few coincide with a gene symbol and can be plotted, but the regulon <i>activity</i> the classifier used is not the same quantity as the expression of that TF. The block is imputed from RNA.'};
 
+// Violins for the active modality: RNA comes from evidence.json, every other modality from its own
+// matrix via evidence_modalities.json. Falls back to the RNA set so the page still works without it.
+function violinsFor(m){
+  if(m==='RNA')return {src:CUR.violins,unit:'CP10k+log1p',imputed:false};
+  const d=MV&&MV.drivers&&MV.drivers[CURD]&&MV.drivers[CURD][m];
+  if(d&&Object.keys(d).length)return {src:d,unit:(MV.units&&MV.units[m])||m,imputed:!!IMPUTED[m]};
+  return {src:{},unit:m,imputed:!!IMPUTED[m]};
+}
+function fidelityOf(m,g){const f=MV&&MV.fidelity&&MV.fidelity[m];return f&&f[g]!=null?f[g]:null;}
+
 function showMk(m){const mk=document.getElementById('mk');mk.innerHTML='';
-  const avail=CUR.markers[m].filter(g=>CUR.violins[g]);
-  const missing=CUR.markers[m].filter(g=>!CUR.violins[g]);
+  const V=violinsFor(m);
+  const avail=CUR.markers[m].filter(g=>V.src[g]);
+  const missing=CUR.markers[m].filter(g=>!V.src[g]);
   avail.forEach(g=>{const c=document.createElement('button');c.textContent=g;
+    const fd=fidelityOf(m,g);
+    if(fd!=null)c.title='imputation fidelity (held-out Spearman vs the measured assay): '+fd.toFixed(2);
     c.onclick=()=>{[...mk.children].forEach(x=>x.classList.remove('on'));c.classList.add('on');drawViolin(g,m);};
     mk.appendChild(c);});
   const note=document.getElementById('vnote');
   if(avail.length){
     setTimeout(()=>{[...mk.children].find(b=>b.textContent===avail[0]).click();},0);
     if(missing.length)note.innerHTML='Showing the '+avail.length+' of '+CUR.markers[m].length+
-      ' top '+m+' markers that have per-cell-state <b>measured RNA</b> in this export. '+
-      (MOD_WHY[m]?MOD_WHY[m]:'The remainder are ranked markers whose per-cell-state expression was not exported.');
+      ' top '+m+' markers with per-cell-state values in this export.'+
+      (V.imputed?' <b>This modality is imputed from RNA</b> — the values are model estimates, not measurements; hover a molecule for its imputation fidelity.':'');
   }else{
     Plotly.purge('violin');
     mk.innerHTML='<div class="modwhy">'+(MOD_WHY[m]||'No per-cell-state expression is available for '+m+' markers.')+
@@ -167,14 +183,15 @@ function showMk(m){const mk=document.getElementById('mk');mk.innerHTML='';
       ' features. Their contribution to the call is the per-modality AUROC and fusion weight in panel 1 above.';
   }
 }
-function drawViolin(g,m){const gd=CUR.violins[g],states=Object.keys(gd);
+function drawViolin(g,m){const V=violinsFor(m),gd=V.src[g];if(!gd)return;const states=Object.keys(gd);
   const traces=[['mutant',ACC],['control',NEUTRAL]].map(([grp,col])=>{const xs=[],ys=[];
     states.forEach(st=>(gd[st][grp]||[]).forEach(v=>{xs.push(st);ys.push(v);}));
     return {type:'violin',x:xs,y:ys,name:grp==='mutant'?'driver-mutant':'healthy control',legendgroup:grp,scalegroup:grp,spanmode:'hard',
       box:{visible:false},meanline:{visible:true},points:'all',pointpos:0,jitter:.3,marker:{size:4,opacity:.55,color:col},line:{color:col},fillcolor:col+'33'};});
   // overlay THIS patient's own value per cell-state (big blue diamond) when the atlas has this sample
   let hl=null;
-  const smd=(SAMP.drivers&&SAMP.drivers[CURD]&&SAMP.drivers[CURD][g])||null;
+  // the overlay was recomputed from the RNA pseudobulk counts, so it is only on-scale for RNA
+  const smd=(m==='RNA'&&SAMP.drivers&&SAMP.drivers[CURD]&&SAMP.drivers[CURD][g])||null;
   if(CURKEY&&SAMPSET.has(CURKEY)&&smd){
     const hx=[],hy=[];
     states.forEach(st=>{if(smd[st]!==undefined){hx.push(st);hy.push(smd[st][CURKEY]!==undefined?smd[st][CURKEY]:0);}});
@@ -184,7 +201,7 @@ function drawViolin(g,m){const gd=CUR.violins[g],states=Object.keys(gd);
   }
   if(hl)traces.push(hl);
   Plotly.newPlot('violin',traces,Object.assign({},LIGHT,{violinmode:'group',
-    yaxis:{title:g+'  (CP10k+log1p)',gridcolor:LINE,zeroline:false},xaxis:{tickangle:-30,automargin:true}}),{displayModeBar:false});
+    yaxis:{title:g+'  ('+V.unit+')',gridcolor:LINE,zeroline:false},xaxis:{tickangle:-30,automargin:true}}),{displayModeBar:false});
   const base=g+' — pseudobulk expression per cell-state, driver-mutant samples (gold) vs healthy marrow controls (grey).';
   const who=hl?' <span style="color:'+HL+'">◆ = this patient ('+CURKEY+')</span>':
     (CURKEY&&!SAMPSET.has(CURKEY)?' <span style="color:'+MUTED+'">· this sample is not in the atlas slice, so its own dot can\'t be shown</span>':'');
